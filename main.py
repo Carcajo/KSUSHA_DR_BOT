@@ -9,17 +9,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
+# --- НАСТРОЙКИ ПУТЕЙ ---
 BASE_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = BASE_DIR / "images"
 
-import os
-TOKEN = "8744964208:AAGzxouce3_8KvwLl9g4kS-uF0xNHhvPEr4"
+# Берем токен из переменных (на Railway назови её BOT_TOKEN) или используем твой
+TOKEN = os.getenv("BOT_TOKEN", "8744964208:AAGzxouce3_8KvwLl9g4kS-uF0xNHhvPEr4")
 REWARD = 50
 
 STEPS = [
     {
         "photo": "img7.jpg",
-        "text": "Привет, красотка! С днем рождения! 🎉 У тебя сегодня особенный день, и я подготовила для тебя кое-что интересное. Начнем?",
+        "text": "Привет, красотка! С днем рождения! 🎉 У тебя сегодня особенный день, и я подготовил для тебя кое-что интересное. Начнем?",
         "buttons": ["Да!", "Конечно", "Поехали"]
     },
     {
@@ -54,28 +55,22 @@ STEPS = [
     }
 ]
 
-# --- ДАННЫЕ КВЕСТА ---
 QUEST_STEPS = [
     {
         "question": "📍 Задание 1: Место, где мы впервые встретились. Поезжай туда, сделай фото и напиши название этого места в описании!",
-        "key": "клуб",
-    },
+        "key": "клуб"},
     {
         "question": "📍 Задание 2: Место, где мы с тобой фотографировались первый раз и снимали видосики. Жду фото и название места, которое там рядом (это не банк)!",
-        "key": "цирк",
-    },
+        "key": "цирк"},
     {
         "question": "📍 Задание 3: В этом магазине ты НЕ купила то самое зеленое платье. Сфоткай витрину и напиши название ПОЛНОСТЬЮ!",
-        "key": "sky",
-    },
+        "key": "sky"},
     {
         "question": "📍 Здесь ты любишь покупать булочки, хоть и нечасто, но говоришь, что тут самые вкусные. Жду фото и название заведения!",
-        "key": "тьери",
-    }
+        "key": "тьери"}
 ]
 
 
-# Состояния для бота
 class QuestStates(StatesGroup):
     intro = State()
     quest = State()
@@ -87,107 +82,83 @@ router = Router()
 
 
 def get_keyboard(step_index: int):
-    """Создает клавиатуру для конкретного шага."""
     buttons_text = STEPS[step_index]["buttons"]
-    keyboard = []
-    row = []
-    for text in buttons_text:
-        row.append(InlineKeyboardButton(text=text, callback_data=f"step_{step_index + 1}"))
-    keyboard.append(row)
+    keyboard = [[InlineKeyboardButton(text=t, callback_data=f"step_{step_index + 1}") for t in buttons_text]]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+async def safely_send_photo(message: Message, photo_name: str, caption: str, reply_markup=None):
+    """Вспомогательная функция для безопасной отправки фото."""
+    photo_path = IMAGES_DIR / photo_name
+    if photo_path.exists():
+        return await message.answer_photo(photo=FSInputFile(photo_path), caption=caption, reply_markup=reply_markup)
+    else:
+        logging.error(f"Файл не найден: {photo_path}")
+        return await message.answer(f"📸 (Картинка {photo_name} не найдена)\n\n{caption}", reply_markup=reply_markup)
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    # Обнуляем данные пользователя при старте
     await state.update_data(current_quest=0, balance=0)
     await state.set_state(QuestStates.intro)
-
-    step_index = 0
-    photo_path = f"images/{STEPS[step_index]['photo']}"
-    await message.answer_photo(
-        photo=FSInputFile(photo_path),
-        caption=STEPS[step_index]["text"],
-        reply_markup=get_keyboard(step_index)
-    )
+    await safely_send_photo(message, STEPS[0]["photo"], STEPS[0]["text"], get_keyboard(0))
 
 
 @router.callback_query(F.data.startswith("step_"), QuestStates.intro)
 async def handle_steps(callback: CallbackQuery, state: FSMContext):
-    """Обработка всех переходов по кнопкам."""
     next_step = int(callback.data.split("_")[1])
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.answer()
 
     if next_step < len(STEPS):
-        photo_path = f"images/{STEPS[next_step]['photo']}"
-        await callback.message.answer_photo(
-            photo=FSInputFile(photo_path),
-            caption=STEPS[next_step]["text"],
-            reply_markup=get_keyboard(next_step)
-        )
+        await safely_send_photo(callback.message, STEPS[next_step]["photo"], STEPS[next_step]["text"],
+                                get_keyboard(next_step))
     else:
         await callback.message.answer('Круто, что ты всё такая же классная, как и была. С днем рождения тебя!')
 
-        video_path = "video.mp4"
-        try:
-            await callback.message.answer_video(
-                video=FSInputFile(video_path),
-                caption="С днем рождения! ❤️"
-            )
-        except Exception:
-            pass
+        video_path = BASE_DIR / "video.mp4"
+        if video_path.exists():
+            try:
+                await callback.message.answer_video(video=FSInputFile(video_path), caption="С днем рождения! ❤️")
+            except Exception as e:
+                logging.error(f"Ошибка видео: {e}")
 
-        # Начинаем квест
-        await asyncio.sleep(2)  # Небольшая пауза для эффекта
+        await asyncio.sleep(2)
         await callback.message.answer(
             "Но это еще не всё! Я подготовил для тебя квест. За каждое пройденное место ты получишь +50 руб. на подарок и часть секретного QR-кода. Погнали?")
-
         await state.set_state(QuestStates.quest)
         await send_next_quest(callback.message, state)
+    await callback.answer()
 
 
 async def send_next_quest(message: Message, state: FSMContext):
-    """Отправляет текущее задание квеста."""
     data = await state.get_data()
     q_idx = data.get("current_quest", 0)
-
     if q_idx < len(QUEST_STEPS):
-        question_text = QUEST_STEPS[q_idx]["question"]
-        await message.answer(question_text)
+        await message.answer(QUEST_STEPS[q_idx]["question"])
     else:
-        # Полное завершение квеста
         balance = data.get("balance", 0)
         await message.answer(
-            f"🎉 УРА! Ты прошла весь квест!\n💰 Твой итоговый баланс: {balance} руб.\n\nТеперь соедини все 4 части QR-кода, которые я прислал, отсканируй его и узнаешь, где забрать главный подарок!\nС днём Рождения❤️❤️❤️!")
+            f"🎉 УРА! Ты прошла весь квест!\n💰 Твой итоговый баланс: {balance} руб.\n\nТеперь соедини все 4 части QR-кода, отсканируй его и узнаешь, где забрать главный подарок!\nС днём Рождения❤️❤️❤️!")
 
 
 @router.message(QuestStates.quest, F.photo)
 async def handle_quest_answer(message: Message, state: FSMContext):
-    """Проверка фото и названия места."""
     data = await state.get_data()
     q_idx = data.get("current_quest", 0)
     balance = data.get("balance", 0)
-
     current_quest = QUEST_STEPS[q_idx]
 
-    # Проверяем, есть ли в описании к фото ключевое слово
     user_answer = message.caption.lower() if message.caption else ""
 
     if current_quest["key"] in user_answer:
-        # Правильно!
         new_balance = balance + REWARD
         new_q_idx = q_idx + 1
         await state.update_data(current_quest=new_q_idx, balance=new_balance)
 
-        # Отправляем часть QR-кода
-        qr_path = f"images/qr_{new_q_idx}.jpg"
-        await message.answer_photo(
-            photo=FSInputFile(qr_path),
-            caption=f"✅ Верно! Это {current_quest['key'].capitalize()}.\n💵 Тебе начислено {REWARD} руб.\n🎁 Вот часть {new_q_idx} твоего QR-кода!"
-        )
+        qr_name = f"qr_{new_q_idx}.jpg"
+        await safely_send_photo(message, qr_name,
+                                f"✅ Верно! Это {current_quest['key'].capitalize()}.\n💵 Тебе начислено {REWARD} руб.\n🎁 Вот часть {new_q_idx} твоего QR-кода!")
 
-        # Ждем немного и шлем следующее задание
         await asyncio.sleep(1)
         await send_next_quest(message, state)
     else:
@@ -197,7 +168,6 @@ async def handle_quest_answer(message: Message, state: FSMContext):
 
 @router.message(QuestStates.quest)
 async def remind_about_photo(message: Message):
-    """Если прислала просто текст без фото."""
     await message.answer(
         "Чтобы я засчитал ответ, пришли именно **фотографию** места и напиши его название в подписи к фото!")
 
@@ -211,5 +181,5 @@ async def main():
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот выключен")
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот выключен")
