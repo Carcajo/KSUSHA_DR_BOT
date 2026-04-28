@@ -3,14 +3,13 @@ import logging
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
-# --- НАСТРОЙКИ ---
 TOKEN = "8744964208:AAGzxouce3_8KvwLl9g4kS-uF0xNHhvPEr4"
+REWARD = 50
 
-# Список всех шагов. Ты можешь менять тексты и кнопки прямо здесь.
-# 'photo' - имя файла в папке images
-# 'text' - подпись к фото
-# 'buttons' - список названий кнопок (можно любое количество)
 STEPS = [
     {
         "photo": "img7.jpg",
@@ -49,8 +48,35 @@ STEPS = [
     }
 ]
 
+# --- ДАННЫЕ КВЕСТА ---
+QUEST_STEPS = [
+    {
+        "question": "📍 Задание 1: Место, где мы впервые встретились. Поезжай туда, сделай фото и напиши название этого места в описании!",
+        "key": "клуб",
+    },
+    {
+        "question": "📍 Задание 2: Место, где мы с тобой фотографировались первый раз и снимали видосики. Жду фото и название места, которое там рядом (это не банк)!",
+        "key": "цирк",
+    },
+    {
+        "question": "📍 Задание 3: В этом магазине ты НЕ купила то самое зеленое платье. Сфоткай витрину и напиши название ПОЛНОСТЬЮ!",
+        "key": "sky",
+    },
+    {
+        "question": "📍 Здесь ты любишь покупать булочки, хоть и нечасто, но говоришь, что тут самые вкусные. Жду фото и название заведения!",
+        "key": "тьери",
+    }
+]
+
+
+# Состояния для бота
+class QuestStates(StatesGroup):
+    intro = State()
+    quest = State()
+
+
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 
 
@@ -58,20 +84,21 @@ def get_keyboard(step_index: int):
     """Создает клавиатуру для конкретного шага."""
     buttons_text = STEPS[step_index]["buttons"]
     keyboard = []
-
     row = []
     for text in buttons_text:
         row.append(InlineKeyboardButton(text=text, callback_data=f"step_{step_index + 1}"))
-
     keyboard.append(row)
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    # Обнуляем данные пользователя при старте
+    await state.update_data(current_quest=0, balance=0)
+    await state.set_state(QuestStates.intro)
+
     step_index = 0
     photo_path = f"images/{STEPS[step_index]['photo']}"
-
     await message.answer_photo(
         photo=FSInputFile(photo_path),
         caption=STEPS[step_index]["text"],
@@ -79,11 +106,10 @@ async def cmd_start(message: Message):
     )
 
 
-@router.callback_query(F.data.startswith("step_"))
-async def handle_steps(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("step_"), QuestStates.intro)
+async def handle_steps(callback: CallbackQuery, state: FSMContext):
     """Обработка всех переходов по кнопкам."""
     next_step = int(callback.data.split("_")[1])
-
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer()
 
@@ -95,7 +121,7 @@ async def handle_steps(callback: CallbackQuery):
             reply_markup=get_keyboard(next_step)
         )
     else:
-        await callback.message.answer('Круто, что ты всё такая же классная, как и была. С днем рождения тебя. Напиши Максиму (@Carcajo), спроси, "Что будем делать дальше?"')
+        await callback.message.answer('Круто, что ты всё такая же классная, как и была. С днем рождения тебя!')
 
         video_path = "video.mp4"
         try:
@@ -103,9 +129,71 @@ async def handle_steps(callback: CallbackQuery):
                 video=FSInputFile(video_path),
                 caption="С днем рождения! ❤️"
             )
-        except Exception as e:
-            await callback.message.answer(
-                f"Ошибка при отправке видео: {e}\nПроверь, что файл video.mp4 лежит в папке с ботом.")
+        except Exception:
+            pass
+
+        # Начинаем квест
+        await asyncio.sleep(2)  # Небольшая пауза для эффекта
+        await callback.message.answer(
+            "Но это еще не всё! Я подготовил для тебя квест. За каждое пройденное место ты получишь +50 руб. на подарок и часть секретного QR-кода. Погнали?")
+
+        await state.set_state(QuestStates.quest)
+        await send_next_quest(callback.message, state)
+
+
+async def send_next_quest(message: Message, state: FSMContext):
+    """Отправляет текущее задание квеста."""
+    data = await state.get_data()
+    q_idx = data.get("current_quest", 0)
+
+    if q_idx < len(QUEST_STEPS):
+        question_text = QUEST_STEPS[q_idx]["question"]
+        await message.answer(question_text)
+    else:
+        # Полное завершение квеста
+        balance = data.get("balance", 0)
+        await message.answer(
+            f"🎉 УРА! Ты прошла весь квест!\n💰 Твой итоговый баланс: {balance} руб.\n\nТеперь соедини все 4 части QR-кода, которые я прислал, отсканируй его и узнаешь, где забрать главный подарок!\nС днём Рождения❤️❤️❤️!")
+
+
+@router.message(QuestStates.quest, F.photo)
+async def handle_quest_answer(message: Message, state: FSMContext):
+    """Проверка фото и названия места."""
+    data = await state.get_data()
+    q_idx = data.get("current_quest", 0)
+    balance = data.get("balance", 0)
+
+    current_quest = QUEST_STEPS[q_idx]
+
+    # Проверяем, есть ли в описании к фото ключевое слово
+    user_answer = message.caption.lower() if message.caption else ""
+
+    if current_quest["key"] in user_answer:
+        # Правильно!
+        new_balance = balance + REWARD
+        new_q_idx = q_idx + 1
+        await state.update_data(current_quest=new_q_idx, balance=new_balance)
+
+        # Отправляем часть QR-кода
+        qr_path = f"images/qr_{new_q_idx}.jpg"
+        await message.answer_photo(
+            photo=FSInputFile(qr_path),
+            caption=f"✅ Верно! Это {current_quest['key'].capitalize()}.\n💵 Тебе начислено {REWARD} руб.\n🎁 Вот часть {new_q_idx} твоего QR-кода!"
+        )
+
+        # Ждем немного и шлем следующее задание
+        await asyncio.sleep(1)
+        await send_next_quest(message, state)
+    else:
+        await message.answer(
+            "Хм, кажется это не то место или ты забыла написать название в описании к фото. Попробуй еще раз!")
+
+
+@router.message(QuestStates.quest)
+async def remind_about_photo(message: Message):
+    """Если прислала просто текст без фото."""
+    await message.answer(
+        "Чтобы я засчитал ответ, пришли именно **фотографию** места и напиши его название в подписи к фото!")
 
 
 async def main():
