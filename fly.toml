@@ -1,0 +1,9 @@
+app = "ksusha-dr-bot"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory_mb = 256
