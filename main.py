@@ -7,7 +7,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-TOKEN = "8744964208:AAGzxouce3_8KvwLl9g4kS-uF0xNHhvPEr4"
+import os
+TOKEN = os.getenv("BOT_TOKEN")
 REWARD = 50
 
 STEPS = [
