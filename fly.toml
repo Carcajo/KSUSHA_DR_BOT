@@ -1,13 +1,6 @@
 app = "ksusha-dr-main-maxim-love-bot22"
 primary_region = "ams"
 
-[[services]]
-  protocol = "tcp"
-  internal_port = 8080
-
-  [[services.ports]]
-    port = 80
-
 [build]
   dockerfile = "Dockerfile"
 
