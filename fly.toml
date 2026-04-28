@@ -1,9 +1,0 @@
-app = "ksusha-dr-main-maxim-love-bot22"
-primary_region = "ams"
-
-[build]
-  dockerfile = "Dockerfile"
-
-[[vm]]
-  size = "shared-cpu-1x"
-  memory_mb = 256
